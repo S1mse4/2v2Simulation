@@ -163,7 +163,7 @@ class SimulationApp:
         self.max_bounces_var = tk.IntVar(value=25)
         self.wall_contacts_var = tk.StringVar(value="Wall contacts: 0 / 25")
         self.wall_contacts = 0
-        self._last_valid_control_values: dict[str, float] = {}
+        self._last_valid_control_values: dict[int, float] = {}
 
         start_x = self.world_width / 2
         start_y = self.world_height / 2
@@ -274,8 +274,8 @@ class SimulationApp:
         row: int,
         integer_only: bool = False,
     ) -> None:
-        var_name = str(variable)
-        self._last_valid_control_values[var_name] = float(variable.get())
+        variable_id = id(variable)
+        self._last_valid_control_values[variable_id] = float(variable.get())
         group = ttk.Frame(parent)
         group.grid(row=row, column=0, sticky="ew", pady=3)
         group.columnconfigure(0, weight=1)
@@ -339,17 +339,17 @@ class SimulationApp:
         high: float,
         integer_only: bool,
     ) -> None:
-        var_name = str(variable)
+        variable_id = id(variable)
         try:
             value = float(variable.get())
         except (ValueError, TK_TCL_ERROR):
-            value = self._last_valid_control_values.get(var_name, low)
+            value = self._last_valid_control_values.get(variable_id, low)
         value = min(high, max(low, value))
         if integer_only:
             variable.set(int(round(value)))
         else:
             variable.set(value)
-        self._last_valid_control_values[var_name] = float(variable.get())
+        self._last_valid_control_values[variable_id] = float(variable.get())
 
     def _compute_viewport(self) -> Tuple[float, float, float, float, float]:
         width = max(1, self.canvas.winfo_width())
