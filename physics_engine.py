@@ -14,9 +14,9 @@ except ImportError:
     ttk = None
 
 if tk is not None:
-    TK_TCL_ERROR = tk.TclError
+    TclError = tk.TclError
 else:
-    class TK_TCL_ERROR(Exception):
+    class TclError(Exception):
         """Placeholder error type for environments without tkinter."""
 
         pass
@@ -163,6 +163,7 @@ class SimulationApp:
         self.max_bounces_var = tk.IntVar(value=25)
         self.wall_contacts_var = tk.StringVar(value="Wall contacts: 0 / 25")
         self.wall_contacts = 0
+        self._last_valid_control_values: dict[int, float] = {}
 
         start_x = self.world_width / 2
         start_y = self.world_height / 2
@@ -188,18 +189,20 @@ class SimulationApp:
         try:
             self.root.state("zoomed")
             return
-        except TK_TCL_ERROR:
+        except TclError:
             pass
         try:
             self.root.attributes("-zoomed", True)
             return
-        except TK_TCL_ERROR:
+        except TclError:
             pass
         screen_w = max(self.MIN_WINDOW_WIDTH, self.root.winfo_screenwidth() - self.WINDOW_WIDTH_MARGIN)
         screen_h = max(self.MIN_WINDOW_HEIGHT, self.root.winfo_screenheight() - self.WINDOW_HEIGHT_MARGIN)
         self.root.geometry(f"{screen_w}x{screen_h}")
 
     def _build_ui(self) -> None:
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
         container = ttk.Frame(self.root, padding=10)
         container.grid(row=0, column=0, sticky="nsew")
 
@@ -211,7 +214,8 @@ class SimulationApp:
             highlightthickness=0,
         )
         self.canvas.grid(row=0, column=0, padx=(0, 12), sticky="nsew")
-        container.columnconfigure(0, weight=1)
+        container.columnconfigure(0, weight=4)
+        container.columnconfigure(1, weight=1)
         container.rowconfigure(0, weight=1)
         self.canvas.bind("<Configure>", self._on_canvas_resize)
         self.canvas.bind("<ButtonPress-1>", self._on_press_ball)
@@ -219,7 +223,8 @@ class SimulationApp:
         self.canvas.bind("<ButtonRelease-1>", self._on_release_ball)
 
         controls_frame = ttk.LabelFrame(container, text="Menu", padding=10)
-        controls_frame.grid(row=0, column=1, sticky="ns")
+        controls_frame.grid(row=0, column=1, sticky="nsew")
+        controls_frame.columnconfigure(0, weight=1)
 
         self._add_scale(controls_frame, "Ball diameter (m)", self.diameter_var, 0.1, 0.6, 0)
         self._add_scale(controls_frame, "Weight (kg)", self.weight_var, 0.2, 10.0, 1)
@@ -231,7 +236,15 @@ class SimulationApp:
         self._add_scale(controls_frame, "Force Y (N)", self.force_y_var, -80.0, 80.0, 5)
         self._add_scale(controls_frame, "Restitution", self.restitution_var, 0.1, 1.0, 6)
         self._add_scale(controls_frame, "Time step (s)", self.dt_var, 0.003, 0.04, 7)
-        self._add_scale(controls_frame, "Max wall contacts", self.max_bounces_var, 1, 300, 8)
+        self._add_scale(
+            controls_frame,
+            "Max wall contacts",
+            self.max_bounces_var,
+            1,
+            300,
+            8,
+            integer_only=True,
+        )
 
         ttk.Button(controls_frame, text="Start", command=self._start_simulation).grid(
             row=9, column=0, sticky="ew", pady=(10, 0)
@@ -255,21 +268,88 @@ class SimulationApp:
         self,
         parent: ttk.LabelFrame,
         label: str,
-        variable: tk.DoubleVar,
+        variable: tk.Variable,
         low: float,
         high: float,
         row: int,
+        integer_only: bool = False,
     ) -> None:
+        variable_id = id(variable)
+        self._last_valid_control_values[variable_id] = float(variable.get())
         group = ttk.Frame(parent)
         group.grid(row=row, column=0, sticky="ew", pady=3)
         group.columnconfigure(0, weight=1)
         ttk.Label(group, text=label).grid(row=0, column=0, sticky="w")
-        ttk.Scale(group, variable=variable, from_=low, to=high).grid(
+        ttk.Scale(
+            group,
+            variable=variable,
+            from_=low,
+            to=high,
+            command=lambda value: self._on_scale_change(value, variable, integer_only),
+        ).grid(
             row=1, column=0, sticky="ew", padx=(0, 6)
         )
-        ttk.Label(group, textvariable=variable, width=self.VALUE_LABEL_WIDTH).grid(
+        validate_command = (
+            self.root.register(
+                lambda proposed, int_only=integer_only: self._validate_numeric_input(
+                    proposed, int_only
+                )
+            ),
+            "%P",
+        )
+        value_entry = ttk.Entry(
+            group,
+            textvariable=variable,
+            width=self.VALUE_LABEL_WIDTH,
+            validate="key",
+            validatecommand=validate_command,
+        )
+        value_entry.grid(
             row=1, column=1, sticky="e"
         )
+        value_entry.bind(
+            "<FocusOut>",
+            lambda _event: self._commit_control_value(variable, low, high, integer_only),
+        )
+        value_entry.bind(
+            "<Return>",
+            lambda _event: self._commit_control_value(variable, low, high, integer_only),
+        )
+
+    def _on_scale_change(self, value: str, variable: tk.Variable, integer_only: bool) -> None:
+        if not integer_only:
+            return
+        variable.set(int(round(float(value))))
+
+    def _validate_numeric_input(self, proposed: str, integer_only: bool) -> bool:
+        if proposed in {"", "-", "."}:
+            return True
+        if integer_only:
+            return proposed.lstrip("-").isdigit()
+        try:
+            float(proposed)
+            return True
+        except ValueError:
+            return False
+
+    def _commit_control_value(
+        self,
+        variable: tk.Variable,
+        low: float,
+        high: float,
+        integer_only: bool,
+    ) -> None:
+        variable_id = id(variable)
+        try:
+            value = float(variable.get())
+        except (ValueError, TclError):
+            value = self._last_valid_control_values.get(variable_id, low)
+        value = min(high, max(low, value))
+        if integer_only:
+            variable.set(int(round(value)))
+        else:
+            variable.set(value)
+        self._last_valid_control_values[variable_id] = float(variable.get())
 
     def _compute_viewport(self) -> Tuple[float, float, float, float, float]:
         width = max(1, self.canvas.winfo_width())
@@ -482,7 +562,7 @@ class SimulationApp:
 if __name__ == "__main__":
     try:
         SimulationApp().run()
-    except (RuntimeError, TK_TCL_ERROR):
+    except (RuntimeError, TclError):
         # Fallback for environments without Tk support or no display.
         engine = RectangularBounceEngine(world_width=12.0, world_height=7.0, restitution=0.82)
         ball = Ball(x=2.0, y=2.0, vx=4.0, vy=3.0, radius=0.11)
