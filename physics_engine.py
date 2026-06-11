@@ -54,6 +54,10 @@ class RectangularBounceEngine:
         self.wall_thickness = wall_thickness
 
     def step(self, ball: Ball, dt: float) -> Ball:
+        stepped_ball, _ = self.step_with_contacts(ball, dt)
+        return stepped_ball
+
+    def step_with_contacts(self, ball: Ball, dt: float) -> Tuple[Ball, int]:
         """Advance the simulation by one fixed time step.
 
         Returns a new `Ball` state after movement and wall collision resolution.
@@ -74,9 +78,9 @@ class RectangularBounceEngine:
         vx = ball.vx
         vy = ball.vy
 
-        x, vx = self._bounce_1d(x, vx, min_x, max_x)
-        y, vy = self._bounce_1d(y, vy, min_y, max_y)
-        return Ball(x=x, y=y, vx=vx, vy=vy, radius=ball.radius)
+        x, vx, x_contacts = self._bounce_1d(x, vx, min_x, max_x)
+        y, vy, y_contacts = self._bounce_1d(y, vy, min_y, max_y)
+        return Ball(x=x, y=y, vx=vx, vy=vy, radius=ball.radius), x_contacts + y_contacts
 
     def simulate(self, ball: Ball, dt: float, steps: int) -> List[Ball]:
         """Run repeated `step` updates and return the full trajectory.
@@ -95,31 +99,23 @@ class RectangularBounceEngine:
 
     def _bounce_1d(
         self, position: float, velocity: float, low: float, high: float
-    ) -> Tuple[float, float]:
-        """Reflect one axis into inclusive bounds using mirrored periodicity.
-
-        If position is outside `[low, high]`, it is folded back into range by
-        wrapping over a period of `2 * (high - low)`. The velocity is updated
-        with the local reflection derivative and scaled by restitution.
-        """
+    ) -> Tuple[float, float, int]:
+        """Reflect one axis into inclusive bounds and count wall contacts."""
         if low <= position <= high:
-            return position, velocity
+            return position, velocity, 0
 
         span = high - low
+        shifted = position - low
+        contacts = abs(math.floor(shifted / span))
         period = 2 * span
-        wrapped = (position - low) % period
-
+        wrapped = shifted % period
         if wrapped <= span:
             reflected_position = low + wrapped
-            reflection_derivative = 1.0
         else:
             reflected_position = high - (wrapped - span)
-            reflection_derivative = -1.0
-
-        reflected_velocity = (
-            velocity * reflection_derivative * self.restitution
-        )
-        return reflected_position, reflected_velocity
+        reflection_derivative = -1.0 if contacts % 2 else 1.0
+        reflected_velocity = velocity * reflection_derivative * (self.restitution ** contacts)
+        return reflected_position, reflected_velocity, contacts
 
 
 class SimulationApp:
@@ -127,10 +123,11 @@ class SimulationApp:
 
     VALUE_LABEL_WIDTH = 9
     ANIMATION_FRAME_MS = 16
-    GRAVITY = -9.81
+    GRAVITY = 0.0
     AIR_DRAG_COEFF = 0.08
     HIT_RADIUS_MULTIPLIER = 1.35
     MIN_HIT_RADIUS_PX = 10.0
+    METERS_PER_PIXEL = 0.012
     MIN_WINDOW_WIDTH = 900
     MIN_WINDOW_HEIGHT = 640
     WINDOW_WIDTH_MARGIN = 80
@@ -163,6 +160,9 @@ class SimulationApp:
         self.force_y_var = tk.DoubleVar(value=0.0)
         self.restitution_var = tk.DoubleVar(value=0.82)
         self.dt_var = tk.DoubleVar(value=self.default_dt)
+        self.max_bounces_var = tk.IntVar(value=25)
+        self.wall_contacts_var = tk.StringVar(value="Wall contacts: 0 / 25")
+        self.wall_contacts = 0
 
         start_x = self.world_width / 2
         start_y = self.world_height / 2
@@ -177,8 +177,10 @@ class SimulationApp:
         self._dragging_ball = False
         self._drag_start_offset = (0.0, 0.0)
         self._last_velocity_settings: Optional[Tuple[float, float]] = None
+        self._is_running = False
         self._apply_controlled_velocity_if_changed()
         self._build_ui()
+        self._resize_world_to_canvas()
         self._draw_ball()
         self._tick()
 
@@ -229,12 +231,24 @@ class SimulationApp:
         self._add_scale(controls_frame, "Force Y (N)", self.force_y_var, -80.0, 80.0, 5)
         self._add_scale(controls_frame, "Restitution", self.restitution_var, 0.1, 1.0, 6)
         self._add_scale(controls_frame, "Time step (s)", self.dt_var, 0.003, 0.04, 7)
+        self._add_scale(controls_frame, "Max wall contacts", self.max_bounces_var, 1, 300, 8)
 
-        ttk.Button(controls_frame, text="Reset ball", command=self._reset_ball).grid(
-            row=8, column=0, sticky="ew", pady=(10, 0)
+        ttk.Button(controls_frame, text="Start", command=self._start_simulation).grid(
+            row=9, column=0, sticky="ew", pady=(10, 0)
         )
+        ttk.Button(controls_frame, text="Pause", command=self._pause_simulation).grid(
+            row=10, column=0, sticky="ew", pady=(6, 0)
+        )
+        ttk.Button(controls_frame, text="Reset ball", command=self._reset_ball).grid(
+            row=11, column=0, sticky="ew", pady=(6, 0)
+        )
+        ttk.Label(
+            controls_frame,
+            textvariable=self.wall_contacts_var,
+            anchor="center",
+        ).grid(row=12, column=0, sticky="ew", pady=(10, 0))
         ttk.Button(controls_frame, text="Quit", command=self.root.destroy).grid(
-            row=9, column=0, sticky="ew", pady=(6, 0)
+            row=13, column=0, sticky="ew", pady=(6, 0)
         )
 
     def _add_scale(
@@ -301,6 +315,12 @@ class SimulationApp:
             tags="ball",
         )
 
+    def _refresh_wall_contacts_label(self) -> None:
+        max_contacts = max(1, int(self.max_bounces_var.get()))
+        self.wall_contacts_var.set(
+            f"Wall contacts: {self.wall_contacts} / {max_contacts}"
+        )
+
     def _reset_ball(self) -> None:
         new_radius = max(0.05, self.diameter_var.get() / 2)
         reset_x, reset_y = self._clamp_to_play_area(*self.reset_point, new_radius)
@@ -312,7 +332,51 @@ class SimulationApp:
             radius=new_radius,
         )
         self._last_velocity_settings = None
+        self._is_running = False
+        self.wall_contacts = 0
+        self._refresh_wall_contacts_label()
         self._apply_controlled_velocity_if_changed()
+
+    def _start_simulation(self) -> None:
+        self._apply_controlled_velocity_if_changed()
+        if self.wall_contacts >= max(1, int(self.max_bounces_var.get())):
+            self.wall_contacts = 0
+        self._is_running = True
+        self._refresh_wall_contacts_label()
+
+    def _pause_simulation(self) -> None:
+        self._is_running = False
+
+    def _resize_world_to_canvas(self) -> None:
+        usable_width_px = max(1.0, self.canvas.winfo_width() - 2 * self.margin)
+        usable_height_px = max(1.0, self.canvas.winfo_height() - 2 * self.margin)
+        new_world_width = max(0.6, usable_width_px * self.METERS_PER_PIXEL)
+        new_world_height = max(0.6, usable_height_px * self.METERS_PER_PIXEL)
+
+        old_world_width = self.world_width
+        old_world_height = self.world_height
+        if (
+            abs(new_world_width - old_world_width) < 1e-9
+            and abs(new_world_height - old_world_height) < 1e-9
+        ):
+            return
+
+        ball_ratio_x = self.ball.x / old_world_width
+        ball_ratio_y = self.ball.y / old_world_height
+        reset_ratio_x = self.reset_point[0] / old_world_width
+        reset_ratio_y = self.reset_point[1] / old_world_height
+
+        self.world_width = new_world_width
+        self.world_height = new_world_height
+        self.engine.world_width = new_world_width
+        self.engine.world_height = new_world_height
+        self.ball.x = ball_ratio_x * self.world_width
+        self.ball.y = ball_ratio_y * self.world_height
+        self.reset_point = (reset_ratio_x * self.world_width, reset_ratio_y * self.world_height)
+        self.ball.x, self.ball.y = self._clamp_to_play_area(self.ball.x, self.ball.y, self.ball.radius)
+        self.reset_point = self._clamp_to_play_area(
+            self.reset_point[0], self.reset_point[1], self.ball.radius
+        )
 
     def _clamp_to_play_area(self, x: float, y: float, radius: float) -> Tuple[float, float]:
         min_x = self.wall_thickness + radius
@@ -328,6 +392,7 @@ class SimulationApp:
         return x, y
 
     def _on_canvas_resize(self, _event: tk.Event) -> None:
+        self._resize_world_to_canvas()
         self._draw_ball()
 
     def _on_press_ball(self, event: tk.Event) -> None:
@@ -384,6 +449,12 @@ class SimulationApp:
             self.root.after(self.ANIMATION_FRAME_MS, self._tick)
             return
 
+        self._refresh_wall_contacts_label()
+        if not self._is_running:
+            self._draw_ball()
+            self.root.after(self.ANIMATION_FRAME_MS, self._tick)
+            return
+
         self._apply_controlled_velocity_if_changed()
 
         weight = max(0.01, self.weight_var.get())
@@ -396,7 +467,11 @@ class SimulationApp:
         self.ball.vx *= max(0.0, 1.0 - self.AIR_DRAG_COEFF * dt)
         self.ball.vy *= max(0.0, 1.0 - self.AIR_DRAG_COEFF * dt)
 
-        self.ball = self.engine.step(self.ball, dt)
+        self.ball, wall_contacts = self.engine.step_with_contacts(self.ball, dt)
+        self.wall_contacts += wall_contacts
+        if self.wall_contacts >= max(1, int(self.max_bounces_var.get())):
+            self._is_running = False
+
         self._draw_ball()
         self.root.after(self.ANIMATION_FRAME_MS, self._tick)
 
