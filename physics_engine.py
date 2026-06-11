@@ -129,6 +129,16 @@ class SimulationApp:
     ANIMATION_FRAME_MS = 16
     GRAVITY = -9.81
     AIR_DRAG_COEFF = 0.08
+    HIT_RADIUS_MULTIPLIER = 1.35
+    MIN_HIT_RADIUS_PX = 10.0
+    MIN_WINDOW_WIDTH = 900
+    MIN_WINDOW_HEIGHT = 640
+    WINDOW_WIDTH_MARGIN = 80
+    WINDOW_HEIGHT_MARGIN = 100
+    CANVAS_BG_COLOR = "#0A6629"
+    FIELD_COLOR = "#108A3A"
+    BALL_FILL_COLOR = "#F57C00"
+    BALL_OUTLINE_COLOR = "#FFE0B2"
 
     def __init__(self) -> None:
         if tk is None or ttk is None:
@@ -183,8 +193,8 @@ class SimulationApp:
             return
         except TK_TCL_ERROR:
             pass
-        screen_w = max(900, self.root.winfo_screenwidth() - 80)
-        screen_h = max(640, self.root.winfo_screenheight() - 100)
+        screen_w = max(self.MIN_WINDOW_WIDTH, self.root.winfo_screenwidth() - self.WINDOW_WIDTH_MARGIN)
+        screen_h = max(self.MIN_WINDOW_HEIGHT, self.root.winfo_screenheight() - self.WINDOW_HEIGHT_MARGIN)
         self.root.geometry(f"{screen_w}x{screen_h}")
 
     def _build_ui(self) -> None:
@@ -195,7 +205,7 @@ class SimulationApp:
             container,
             width=960,
             height=640,
-            bg="#0A6629",
+            bg=self.CANVAS_BG_COLOR,
             highlightthickness=0,
         )
         self.canvas.grid(row=0, column=0, padx=(0, 12), sticky="nsew")
@@ -275,7 +285,7 @@ class SimulationApp:
             top + wall_px,
             right - wall_px,
             bottom - wall_px,
-            fill="#108A3A",
+            fill=self.FIELD_COLOR,
             outline="",
         )
         cx, cy = self._world_to_canvas(self.ball.x, self.ball.y)
@@ -285,8 +295,8 @@ class SimulationApp:
             cy - r,
             cx + r,
             cy + r,
-            fill="#F57C00",
-            outline="#FFE0B2",
+            fill=self.BALL_FILL_COLOR,
+            outline=self.BALL_OUTLINE_COLOR,
             width=2,
             tags="ball",
         )
@@ -323,7 +333,7 @@ class SimulationApp:
     def _on_press_ball(self, event: tk.Event) -> None:
         ball_cx, ball_cy = self._world_to_canvas(self.ball.x, self.ball.y)
         scale, _, _, _, _ = self._compute_viewport()
-        hit_radius = max(10.0, self.ball.radius * scale * 1.35)
+        hit_radius = max(self.MIN_HIT_RADIUS_PX, self.ball.radius * scale * self.HIT_RADIUS_MULTIPLIER)
         if (event.x - ball_cx) ** 2 + (event.y - ball_cy) ** 2 <= hit_radius**2:
             self._dragging_ball = True
             world_x, world_y = self._canvas_to_world(event.x, event.y)
@@ -386,8 +396,7 @@ class SimulationApp:
         self.ball.vx *= max(0.0, 1.0 - self.AIR_DRAG_COEFF * dt)
         self.ball.vy *= max(0.0, 1.0 - self.AIR_DRAG_COEFF * dt)
 
-        if not self._dragging_ball:
-            self.ball = self.engine.step(self.ball, dt)
+        self.ball = self.engine.step(self.ball, dt)
         self._draw_ball()
         self.root.after(self.ANIMATION_FRAME_MS, self._tick)
 
