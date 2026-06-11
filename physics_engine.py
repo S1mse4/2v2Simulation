@@ -104,17 +104,17 @@ class RectangularBounceEngine:
         if low <= position <= high:
             return position, velocity, 0
 
-        reflected_position = position
-        reflected_velocity = velocity
-        contacts = 0
-        while reflected_position < low or reflected_position > high:
-            if reflected_position < low:
-                reflected_position = low + (low - reflected_position)
-                reflected_velocity = abs(reflected_velocity) * self.restitution
-            else:
-                reflected_position = high - (reflected_position - high)
-                reflected_velocity = -abs(reflected_velocity) * self.restitution
-            contacts += 1
+        span = high - low
+        shifted = position - low
+        contacts = abs(math.floor(shifted / span))
+        period = 2 * span
+        wrapped = shifted % period
+        if wrapped <= span:
+            reflected_position = low + wrapped
+        else:
+            reflected_position = high - (wrapped - span)
+        reflection_derivative = -1.0 if contacts % 2 else 1.0
+        reflected_velocity = velocity * reflection_derivative * (self.restitution ** contacts)
         return reflected_position, reflected_velocity, contacts
 
 
@@ -434,7 +434,6 @@ class SimulationApp:
         self._last_velocity_settings = settings
 
     def _tick(self) -> None:
-        self._resize_world_to_canvas()
         dt = max(0.001, self.dt_var.get())
         self.ball.radius = max(0.05, self.diameter_var.get() / 2)
         self.engine.restitution = min(1.0, max(0.0, self.restitution_var.get()))
