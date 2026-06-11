@@ -163,6 +163,7 @@ class SimulationApp:
         self.max_bounces_var = tk.IntVar(value=25)
         self.wall_contacts_var = tk.StringVar(value="Wall contacts: 0 / 25")
         self.wall_contacts = 0
+        self._last_valid_control_values: dict[str, float] = {}
 
         start_x = self.world_width / 2
         start_y = self.world_height / 2
@@ -273,7 +274,8 @@ class SimulationApp:
         row: int,
         integer_only: bool = False,
     ) -> None:
-        start_value = float(variable.get())
+        var_name = str(variable)
+        self._last_valid_control_values[var_name] = float(variable.get())
         group = ttk.Frame(parent)
         group.grid(row=row, column=0, sticky="ew", pady=3)
         group.columnconfigure(0, weight=1)
@@ -307,15 +309,11 @@ class SimulationApp:
         )
         value_entry.bind(
             "<FocusOut>",
-            lambda _event: self._commit_control_value(
-                variable, low, high, integer_only, start_value
-            ),
+            lambda _event: self._commit_control_value(variable, low, high, integer_only),
         )
         value_entry.bind(
             "<Return>",
-            lambda _event: self._commit_control_value(
-                variable, low, high, integer_only, start_value
-            ),
+            lambda _event: self._commit_control_value(variable, low, high, integer_only),
         )
 
     def _on_scale_change(self, value: str, variable: tk.Variable, integer_only: bool) -> None:
@@ -340,17 +338,18 @@ class SimulationApp:
         low: float,
         high: float,
         integer_only: bool,
-        fallback: float,
     ) -> None:
+        var_name = str(variable)
         try:
             value = float(variable.get())
         except (ValueError, TK_TCL_ERROR):
-            value = fallback
+            value = self._last_valid_control_values.get(var_name, low)
         value = min(high, max(low, value))
         if integer_only:
             variable.set(int(round(value)))
         else:
             variable.set(value)
+        self._last_valid_control_values[var_name] = float(variable.get())
 
     def _compute_viewport(self) -> Tuple[float, float, float, float, float]:
         width = max(1, self.canvas.winfo_width())
