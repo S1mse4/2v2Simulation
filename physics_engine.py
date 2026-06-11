@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Simple 2D physics engine for a ball bouncing inside a square."""
+"""Simple 2D physics engine for a ball bouncing inside a rectangular field."""
 
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -31,19 +31,27 @@ class Ball:
     radius: float = 0.0
 
 
-class SquareBounceEngine:
-    def __init__(self, square_size: float, restitution: float = 1.0) -> None:
-        """Create a square-boundary bounce simulator.
-
-        `square_size` is the side length of the square world.
-        `restitution` is the collision energy retention factor (0..1).
-        """
-        if square_size <= 0:
-            raise ValueError("square_size must be > 0")
+class RectangularBounceEngine:
+    def __init__(
+        self,
+        world_width: float,
+        world_height: float,
+        restitution: float = 0.82,
+        wall_thickness: float = 0.04,
+    ) -> None:
+        """Create a rectangular bounce simulator with physical wall thickness."""
+        if world_width <= 0 or world_height <= 0:
+            raise ValueError("world dimensions must be > 0")
         if not 0 <= restitution <= 1:
             raise ValueError("restitution must be between 0 and 1")
-        self.square_size = square_size
+        if wall_thickness < 0:
+            raise ValueError("wall_thickness must be >= 0")
+        if world_width <= 2 * wall_thickness or world_height <= 2 * wall_thickness:
+            raise ValueError("wall_thickness leaves no inner play area")
+        self.world_width = world_width
+        self.world_height = world_height
         self.restitution = restitution
+        self.wall_thickness = wall_thickness
 
     def step(self, ball: Ball, dt: float) -> Ball:
         """Advance the simulation by one fixed time step.
@@ -54,18 +62,20 @@ class SquareBounceEngine:
         if dt <= 0:
             raise ValueError("dt must be > 0")
 
-        min_bound = ball.radius
-        max_bound = self.square_size - ball.radius
-        if min_bound > max_bound:
-            raise ValueError("ball radius is too large for the square")
+        min_x = self.wall_thickness + ball.radius
+        max_x = self.world_width - self.wall_thickness - ball.radius
+        min_y = self.wall_thickness + ball.radius
+        max_y = self.world_height - self.wall_thickness - ball.radius
+        if min_x > max_x or min_y > max_y:
+            raise ValueError("ball radius is too large for the field")
 
         x = ball.x + ball.vx * dt
         y = ball.y + ball.vy * dt
         vx = ball.vx
         vy = ball.vy
 
-        x, vx = self._bounce_1d(x, vx, min_bound, max_bound)
-        y, vy = self._bounce_1d(y, vy, min_bound, max_bound)
+        x, vx = self._bounce_1d(x, vx, min_x, max_x)
+        y, vy = self._bounce_1d(y, vy, min_y, max_y)
         return Ball(x=x, y=y, vx=vx, vy=vy, radius=ball.radius)
 
     def simulate(self, ball: Ball, dt: float, steps: int) -> List[Ball]:
@@ -113,40 +123,69 @@ class SquareBounceEngine:
 
 
 class SimulationApp:
-    """Tkinter app that renders an animated orange ball with live controls."""
+    """Tkinter app that renders an animated ball with live controls."""
 
     VALUE_LABEL_WIDTH = 9
     ANIMATION_FRAME_MS = 16
+    GRAVITY = -9.81
+    AIR_DRAG_COEFF = 0.08
 
     def __init__(self) -> None:
         if tk is None or ttk is None:
             raise RuntimeError("tkinter is not available in this environment")
 
-        self.world_size = 10.0
-        self.canvas_size = 520
-        self.margin = 10
-        self.default_dt = 0.02
+        self.world_width = 12.0
+        self.world_height = 7.0
+        self.wall_thickness = 0.04
+        self.margin = 24
+        self.default_dt = 0.01
 
         self.root = tk.Tk()
         self.root.title("2D Ball Bounce Simulation")
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
+        self._maximize_window()
 
-        self.diameter_var = tk.DoubleVar(value=0.5)
-        self.weight_var = tk.DoubleVar(value=1.0)
+        self.diameter_var = tk.DoubleVar(value=0.22)
+        self.weight_var = tk.DoubleVar(value=1.5)
         self.speed_var = tk.DoubleVar(value=4.0)
         self.direction_var = tk.DoubleVar(value=35.0)
         self.force_x_var = tk.DoubleVar(value=0.0)
         self.force_y_var = tk.DoubleVar(value=0.0)
-        self.restitution_var = tk.DoubleVar(value=0.95)
+        self.restitution_var = tk.DoubleVar(value=0.82)
         self.dt_var = tk.DoubleVar(value=self.default_dt)
 
-        self.ball = Ball(x=3.0, y=3.0, vx=0.0, vy=0.0, radius=0.25)
-        self.engine = SquareBounceEngine(square_size=self.world_size, restitution=0.95)
+        start_x = self.world_width / 2
+        start_y = self.world_height / 2
+        self.ball = Ball(x=start_x, y=start_y, vx=0.0, vy=0.0, radius=0.11)
+        self.reset_point = (start_x, start_y)
+        self.engine = RectangularBounceEngine(
+            world_width=self.world_width,
+            world_height=self.world_height,
+            restitution=self.restitution_var.get(),
+            wall_thickness=self.wall_thickness,
+        )
+        self._dragging_ball = False
+        self._drag_start_offset = (0.0, 0.0)
         self._last_velocity_settings: Optional[Tuple[float, float]] = None
         self._apply_controlled_velocity_if_changed()
         self._build_ui()
         self._draw_ball()
         self._tick()
+
+    def _maximize_window(self) -> None:
+        try:
+            self.root.state("zoomed")
+            return
+        except TK_TCL_ERROR:
+            pass
+        try:
+            self.root.attributes("-zoomed", True)
+            return
+        except TK_TCL_ERROR:
+            pass
+        screen_w = max(900, self.root.winfo_screenwidth() - 80)
+        screen_h = max(640, self.root.winfo_screenheight() - 100)
+        self.root.geometry(f"{screen_w}x{screen_h}")
 
     def _build_ui(self) -> None:
         container = ttk.Frame(self.root, padding=10)
@@ -154,26 +193,32 @@ class SimulationApp:
 
         self.canvas = tk.Canvas(
             container,
-            width=self.canvas_size,
-            height=self.canvas_size,
-            bg="#111111",
+            width=960,
+            height=640,
+            bg="#0A6629",
             highlightthickness=0,
         )
-        self.canvas.grid(row=0, column=0, padx=(0, 12))
+        self.canvas.grid(row=0, column=0, padx=(0, 12), sticky="nsew")
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
+        self.canvas.bind("<ButtonPress-1>", self._on_press_ball)
+        self.canvas.bind("<B1-Motion>", self._on_drag_ball)
+        self.canvas.bind("<ButtonRelease-1>", self._on_release_ball)
 
         controls_frame = ttk.LabelFrame(container, text="Menu", padding=10)
         controls_frame.grid(row=0, column=1, sticky="ns")
 
-        self._add_scale(controls_frame, "Ball diameter", self.diameter_var, 0.2, 2.0, 0)
-        self._add_scale(controls_frame, "Weight", self.weight_var, 0.1, 10.0, 1)
-        self._add_scale(controls_frame, "Velocity speed", self.speed_var, 0.0, 20.0, 2)
+        self._add_scale(controls_frame, "Ball diameter (m)", self.diameter_var, 0.1, 0.6, 0)
+        self._add_scale(controls_frame, "Weight (kg)", self.weight_var, 0.2, 10.0, 1)
+        self._add_scale(controls_frame, "Velocity speed (m/s)", self.speed_var, 0.0, 20.0, 2)
         self._add_scale(
             controls_frame, "Velocity direction (°)", self.direction_var, 0.0, 360.0, 3
         )
-        self._add_scale(controls_frame, "Force X", self.force_x_var, -30.0, 30.0, 4)
-        self._add_scale(controls_frame, "Force Y", self.force_y_var, -30.0, 30.0, 5)
+        self._add_scale(controls_frame, "Force X (N)", self.force_x_var, -80.0, 80.0, 4)
+        self._add_scale(controls_frame, "Force Y (N)", self.force_y_var, -80.0, 80.0, 5)
         self._add_scale(controls_frame, "Restitution", self.restitution_var, 0.1, 1.0, 6)
-        self._add_scale(controls_frame, "Time step", self.dt_var, 0.005, 0.08, 7)
+        self._add_scale(controls_frame, "Time step (s)", self.dt_var, 0.003, 0.04, 7)
 
         ttk.Button(controls_frame, text="Reset ball", command=self._reset_ball).grid(
             row=8, column=0, sticky="ew", pady=(10, 0)
@@ -202,46 +247,104 @@ class SimulationApp:
             row=1, column=1, sticky="e"
         )
 
+    def _compute_viewport(self) -> Tuple[float, float, float, float, float]:
+        width = max(1, self.canvas.winfo_width())
+        height = max(1, self.canvas.winfo_height())
+        usable_w = max(1.0, width - 2 * self.margin)
+        usable_h = max(1.0, height - 2 * self.margin)
+        scale = min(usable_w / self.world_width, usable_h / self.world_height)
+        field_w_px = self.world_width * scale
+        field_h_px = self.world_height * scale
+        left = (width - field_w_px) / 2
+        top = (height - field_h_px) / 2
+        return scale, left, top, left + field_w_px, top + field_h_px
+
     def _world_to_canvas(self, x: float, y: float) -> Tuple[float, float]:
-        scale = (self.canvas_size - 2 * self.margin) / self.world_size
-        cx = self.margin + x * scale
-        cy = self.canvas_size - (self.margin + y * scale)
+        scale, left, _, _, bottom = self._compute_viewport()
+        cx = left + x * scale
+        cy = bottom - y * scale
         return cx, cy
 
     def _draw_ball(self) -> None:
-        self.canvas.delete("ball")
-        cx, cy = self._world_to_canvas(self.ball.x, self.ball.y)
-        scale = (self.canvas_size - 2 * self.margin) / self.world_size
-        r = self.ball.radius * scale
+        self.canvas.delete("all")
+        scale, left, top, right, bottom = self._compute_viewport()
+        wall_px = self.wall_thickness * scale
+        self.canvas.create_rectangle(left, top, right, bottom, fill="black", outline="black", width=1)
         self.canvas.create_rectangle(
-            self.margin,
-            self.margin,
-            self.canvas_size - self.margin,
-            self.canvas_size - self.margin,
-            outline="#888888",
-            width=2,
+            left + wall_px,
+            top + wall_px,
+            right - wall_px,
+            bottom - wall_px,
+            fill="#108A3A",
+            outline="",
         )
+        cx, cy = self._world_to_canvas(self.ball.x, self.ball.y)
+        r = self.ball.radius * scale
         self.canvas.create_oval(
             cx - r,
             cy - r,
             cx + r,
             cy + r,
-            fill="orange",
-            outline="#FFCC80",
+            fill="#F57C00",
+            outline="#FFE0B2",
             width=2,
             tags="ball",
         )
 
     def _reset_ball(self) -> None:
+        new_radius = max(0.05, self.diameter_var.get() / 2)
+        reset_x, reset_y = self._clamp_to_play_area(*self.reset_point, new_radius)
         self.ball = Ball(
-            x=3.0,
-            y=3.0,
+            x=reset_x,
+            y=reset_y,
             vx=0.0,
             vy=0.0,
-            radius=max(0.1, self.diameter_var.get() / 2),
+            radius=new_radius,
         )
         self._last_velocity_settings = None
         self._apply_controlled_velocity_if_changed()
+
+    def _clamp_to_play_area(self, x: float, y: float, radius: float) -> Tuple[float, float]:
+        min_x = self.wall_thickness + radius
+        max_x = self.world_width - self.wall_thickness - radius
+        min_y = self.wall_thickness + radius
+        max_y = self.world_height - self.wall_thickness - radius
+        return min(max(x, min_x), max_x), min(max(y, min_y), max_y)
+
+    def _canvas_to_world(self, cx: float, cy: float) -> Tuple[float, float]:
+        scale, left, _, _, bottom = self._compute_viewport()
+        x = (cx - left) / scale
+        y = (bottom - cy) / scale
+        return x, y
+
+    def _on_canvas_resize(self, _event: tk.Event) -> None:
+        self._draw_ball()
+
+    def _on_press_ball(self, event: tk.Event) -> None:
+        ball_cx, ball_cy = self._world_to_canvas(self.ball.x, self.ball.y)
+        scale, _, _, _, _ = self._compute_viewport()
+        hit_radius = max(10.0, self.ball.radius * scale * 1.35)
+        if (event.x - ball_cx) ** 2 + (event.y - ball_cy) ** 2 <= hit_radius**2:
+            self._dragging_ball = True
+            world_x, world_y = self._canvas_to_world(event.x, event.y)
+            self._drag_start_offset = (self.ball.x - world_x, self.ball.y - world_y)
+
+    def _on_drag_ball(self, event: tk.Event) -> None:
+        if not self._dragging_ball:
+            return
+        cursor_x, cursor_y = self._canvas_to_world(event.x, event.y)
+        x = cursor_x + self._drag_start_offset[0]
+        y = cursor_y + self._drag_start_offset[1]
+        x, y = self._clamp_to_play_area(x, y, self.ball.radius)
+        self.ball.x = x
+        self.ball.y = y
+        self.ball.vx = 0.0
+        self.ball.vy = 0.0
+        self.reset_point = (x, y)
+        self._draw_ball()
+
+    def _on_release_ball(self, _event: tk.Event) -> None:
+        self._dragging_ball = False
 
     def _apply_controlled_velocity_if_changed(self) -> None:
         speed = max(0.0, self.speed_var.get())
@@ -257,18 +360,34 @@ class SimulationApp:
 
     def _tick(self) -> None:
         dt = max(0.001, self.dt_var.get())
-        self.ball.radius = max(0.1, self.diameter_var.get() / 2)
+        self.ball.radius = max(0.05, self.diameter_var.get() / 2)
         self.engine.restitution = min(1.0, max(0.0, self.restitution_var.get()))
+        self.ball.x, self.ball.y = self._clamp_to_play_area(self.ball.x, self.ball.y, self.ball.radius)
+        self.reset_point = self._clamp_to_play_area(
+            self.reset_point[0], self.reset_point[1], self.ball.radius
+        )
+
+        if self._dragging_ball:
+            self.ball.vx = 0.0
+            self.ball.vy = 0.0
+            self._draw_ball()
+            self.root.after(self.ANIMATION_FRAME_MS, self._tick)
+            return
 
         self._apply_controlled_velocity_if_changed()
 
         weight = max(0.01, self.weight_var.get())
         force_x = self.force_x_var.get()
         force_y = self.force_y_var.get()
-        self.ball.vx += (force_x / weight) * dt
-        self.ball.vy += (force_y / weight) * dt
+        accel_x = force_x / weight
+        accel_y = (force_y / weight) + self.GRAVITY
+        self.ball.vx += accel_x * dt
+        self.ball.vy += accel_y * dt
+        self.ball.vx *= max(0.0, 1.0 - self.AIR_DRAG_COEFF * dt)
+        self.ball.vy *= max(0.0, 1.0 - self.AIR_DRAG_COEFF * dt)
 
-        self.ball = self.engine.step(self.ball, dt)
+        if not self._dragging_ball:
+            self.ball = self.engine.step(self.ball, dt)
         self._draw_ball()
         self.root.after(self.ANIMATION_FRAME_MS, self._tick)
 
@@ -281,8 +400,8 @@ if __name__ == "__main__":
         SimulationApp().run()
     except (RuntimeError, TK_TCL_ERROR):
         # Fallback for environments without Tk support or no display.
-        engine = SquareBounceEngine(square_size=10.0, restitution=1.0)
-        ball = Ball(x=2.0, y=2.0, vx=4.0, vy=3.0, radius=0.2)
+        engine = RectangularBounceEngine(world_width=12.0, world_height=7.0, restitution=0.82)
+        ball = Ball(x=2.0, y=2.0, vx=4.0, vy=3.0, radius=0.11)
         trajectory = engine.simulate(ball=ball, dt=0.5, steps=12)
         for i, state in enumerate(trajectory):
             print(
