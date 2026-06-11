@@ -53,14 +53,24 @@ class SquareBounceEngine:
     def _bounce_1d(
         self, position: float, velocity: float, low: float, high: float
     ) -> Tuple[float, float]:
-        while position < low or position > high:
-            if position < low:
-                position = low + (low - position)
-                velocity = abs(velocity) * self.restitution
-            elif position > high:
-                position = high - (position - high)
-                velocity = -abs(velocity) * self.restitution
-        return position, velocity
+        if low <= position <= high:
+            return position, velocity
+
+        span = high - low
+        period = 2 * span
+        wrapped = (position - low) % period
+
+        if wrapped <= span:
+            reflected_position = low + wrapped
+            reflection_derivative = 1.0
+        else:
+            reflected_position = high - (wrapped - span)
+            reflection_derivative = -1.0
+
+        reflected_velocity = (
+            velocity * reflection_derivative * self.restitution
+        )
+        return reflected_position, reflected_velocity
 
 
 if __name__ == "__main__":

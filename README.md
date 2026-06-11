@@ -6,7 +6,7 @@ bouncing inside a square boundary.
 ## Run the simulation
 
 ```bash
-python /home/runner/work/2v2Simulation/2v2Simulation/S1mse4/2v2Simulation/physics_engine.py
+python physics_engine.py
 ```
 
 ## What it does
