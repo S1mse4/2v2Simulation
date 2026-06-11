@@ -14,9 +14,9 @@ except ImportError:
     ttk = None
 
 if tk is not None:
-    TK_TCL_ERROR = tk.TclError
+    TclError = tk.TclError
 else:
-    class TK_TCL_ERROR(Exception):
+    class TclError(Exception):
         """Placeholder error type for environments without tkinter."""
 
         pass
@@ -189,12 +189,12 @@ class SimulationApp:
         try:
             self.root.state("zoomed")
             return
-        except TK_TCL_ERROR:
+        except TclError:
             pass
         try:
             self.root.attributes("-zoomed", True)
             return
-        except TK_TCL_ERROR:
+        except TclError:
             pass
         screen_w = max(self.MIN_WINDOW_WIDTH, self.root.winfo_screenwidth() - self.WINDOW_WIDTH_MARGIN)
         screen_h = max(self.MIN_WINDOW_HEIGHT, self.root.winfo_screenheight() - self.WINDOW_HEIGHT_MARGIN)
@@ -322,7 +322,7 @@ class SimulationApp:
         variable.set(int(round(float(value))))
 
     def _validate_numeric_input(self, proposed: str, integer_only: bool) -> bool:
-        if proposed in {"", "-", ".", "-."}:
+        if proposed in {"", "-", "."}:
             return True
         if integer_only:
             return proposed.lstrip("-").isdigit()
@@ -342,7 +342,7 @@ class SimulationApp:
         variable_id = id(variable)
         try:
             value = float(variable.get())
-        except (ValueError, TK_TCL_ERROR):
+        except (ValueError, TclError):
             value = self._last_valid_control_values.get(variable_id, low)
         value = min(high, max(low, value))
         if integer_only:
@@ -562,7 +562,7 @@ class SimulationApp:
 if __name__ == "__main__":
     try:
         SimulationApp().run()
-    except (RuntimeError, TK_TCL_ERROR):
+    except (RuntimeError, TclError):
         # Fallback for environments without Tk support or no display.
         engine = RectangularBounceEngine(world_width=12.0, world_height=7.0, restitution=0.82)
         ball = Ball(x=2.0, y=2.0, vx=4.0, vy=3.0, radius=0.11)
