@@ -15,6 +15,11 @@ class Ball:
 
 class SquareBounceEngine:
     def __init__(self, square_size: float, restitution: float = 1.0) -> None:
+        """Create a square-boundary bounce simulator.
+
+        `square_size` is the side length of the square world.
+        `restitution` is the collision energy retention factor (0..1).
+        """
         if square_size <= 0:
             raise ValueError("square_size must be > 0")
         if not 0 <= restitution <= 1:
@@ -23,6 +28,11 @@ class SquareBounceEngine:
         self.restitution = restitution
 
     def step(self, ball: Ball, dt: float) -> Ball:
+        """Advance the simulation by one fixed time step.
+
+        Returns a new `Ball` state after movement and wall collision resolution.
+        Raises `ValueError` for non-positive `dt` or invalid radius/bounds setup.
+        """
         if dt <= 0:
             raise ValueError("dt must be > 0")
 
@@ -41,6 +51,11 @@ class SquareBounceEngine:
         return Ball(x=x, y=y, vx=vx, vy=vy, radius=ball.radius)
 
     def simulate(self, ball: Ball, dt: float, steps: int) -> List[Ball]:
+        """Run repeated `step` updates and return the full trajectory.
+
+        `steps` is the number of updates to perform, so the returned list
+        contains `steps + 1` states including the initial state.
+        """
         if steps < 0:
             raise ValueError("steps must be >= 0")
         states = [ball]
@@ -53,6 +68,12 @@ class SquareBounceEngine:
     def _bounce_1d(
         self, position: float, velocity: float, low: float, high: float
     ) -> Tuple[float, float]:
+        """Reflect one axis into inclusive bounds using mirrored periodicity.
+
+        If position is outside `[low, high]`, it is folded back into range by
+        wrapping over a period of `2 * (high - low)`. The velocity is updated
+        with the local reflection derivative and scaled by restitution.
+        """
         if low <= position <= high:
             return position, velocity
 
